@@ -1,0 +1,4 @@
+boto3
+certifi
+requests
+urllib3
