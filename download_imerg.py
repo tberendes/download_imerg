@@ -17,8 +17,6 @@ http = urllib3.PoolManager(cert_reqs='CERT_REQUIRED', ca_certs=certifi.where())
 # Set the URL for the GES DISC subset service endpoint
 url = 'https://disc.gsfc.nasa.gov/service/subset/jsonwsp'
 
-download_results=[]
-
 # This method POSTs formatted JSON WSP requests to the GES DISC endpoint URL
 # It is created for convenience since this task will be repeated more than once
 def get_http_data(request):
@@ -39,7 +37,7 @@ def download_imerg(subset_request):
     # Define the parameters for the data subset
     s3 = boto3.resource(
         's3')
-
+    download_results = []
     # Submit the subset request to the GES DISC Server
     response = get_http_data(subset_request)
     # Report the JobID and initial status
@@ -75,7 +73,7 @@ def download_imerg(subset_request):
         print(result.text)
     #    urls = result.text.split('\n')
         urls = result.text.splitlines()
-        for i in urls: print('%s\n' % i)
+        for i in urls: print('%s' % i)
     except:
         print('Request returned error code %d' % result.status_code)
 
@@ -83,6 +81,9 @@ def download_imerg(subset_request):
     print('\nHTTP_services output:')
     for item in urls:
         outfn = item.split('/')
+        if len(outfn) <= 0:
+            print('skipping unknown file '+outfn)
+            continue
         outfn = outfn[len(outfn) - 1].split('?')[0]
         # skip pdf documentation files staged automatically by request
         if not outfn.endswith('.pdf'):
@@ -109,6 +110,7 @@ def download_imerg(subset_request):
                 print('Help for downloading data is at https://disc.gsfc.nasa.gov/data-access')
         else:
             print('skipping documentation file '+outfn)
+    return download_results
 
 def main():
 
@@ -144,7 +146,7 @@ def main():
         }
     }
 
-    download_imerg(subset_request)
+    download_results = download_imerg(subset_request)
 
 def lambda_handler(event, context):
 
@@ -188,9 +190,14 @@ def lambda_handler(event, context):
         }
     }
 
-    download_imerg(subset_request)
+    download_results=download_imerg(subset_request)
 
-    return dict(statusCode='200', body={'files': download_results}, isBase64Encoded='false')
+    return dict(statusCode='200', headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                body=json.dumps({'files': download_results}), isBase64Encoded='false')
+
+
+#return dict(statusCode='200', body={'files': download_results}, isBase64Encoded='false')
+#    return dict(body={'files': download_results}, isBase64Encoded='false')
 
     # return {
     #     'files': download_results
