@@ -1,7 +1,5 @@
 import sys
 import json
-from urllib.parse import unquote_plus
-
 import urllib3
 import certifi
 import requests
@@ -9,11 +7,11 @@ from time import sleep
 import boto3 as boto3
 
 data_bucket = "mosquito-data"
+json_bucket = "mosquito-json"
+polyfilename = "district_bnds_geojson.geojson"
+polybucket = 'mosquito-dev'
 
 auth = ('mosquito2019', 'Malafr#1')
-
-s3 = boto3.resource(
-    's3')
 
 # Create a urllib PoolManager instance to make requests.
 http = urllib3.PoolManager(cert_reqs='CERT_REQUIRED', ca_certs=certifi.where())
@@ -39,6 +37,8 @@ def get_http_data(request):
 def download_imerg(subset_request):
 
     # Define the parameters for the data subset
+    s3 = boto3.resource(
+        's3')
     download_results = []
     # Submit the subset request to the GES DISC Server
     response = get_http_data(subset_request)
@@ -89,7 +89,7 @@ def download_imerg(subset_request):
         outfn = outfn[len(outfn) - 1].split('?')[0]
         # skip pdf documentation files staged automatically by request
         if not outfn.endswith('.pdf'):
-            download_results.append("imerg/"+outfn)
+            download_results.append(outfn)
             print('outfile %s ' % outfn)
             URL = item
             print("item " + item)
@@ -114,90 +114,108 @@ def download_imerg(subset_request):
             print('skipping documentation file '+outfn)
     return download_results
 
-def load_json(bucket, key):
+def main():
 
-    print("event key " + key)
-    # strip off directory from key for temp file
-    key_split = key.split('/')
-    download_fn=key_split[len(key_split) - 1]
-    file = "/tmp/" + download_fn
-    s3.Bucket(data_bucket).download_file(key, file)
+#    product = 'GPM_3IMERGDE_06'
+#    product = 'GPM_3IMERGDL_06'
+    product = 'GPM_3IMERGDF_06'
+    begTime = '2015-08-01T00:00:00.000Z'
+    endTime = '2015-08-01T23:59:59.999Z'
 
-    try:
-        with open(file) as f:
-            jsonData = json.load(f)
-        f.close()
-    except IOError:
-        print("Could not read file:" + file)
-        jsonData = {"message": "Error reading json file"}
+    minlon = -13.6
+    maxlon = -10.1
+    minlat = 6.8
+    maxlat = 10.1
+    varNames = ['HQprecipitation']
+    # The dimension slice will be for pressure levels between 1000 and 100 hPa
+    # dimName = '/HDFEOS/SWATHS/Temperature/nLevels'
+    # dimVals = [1,2,3,4,5,6,7,8,9,10,11,12,13]
+    # dimSlice = []
+    # for i in range(len(dimVals)) :
+    #    dimSlice.append({'dimensionId': dimName, 'dimensionValue': dimVals[i]})
+    # Construct JSON WSP request for API method: subset
+    subset_request = {
+        'methodname': 'subset',
+        'type': 'jsonwsp/request',
+        'version': '1.0',
+        'args': {
+            'role': 'subset',
+            'start': begTime,
+            'end': endTime,
+            'box': [minlon, minlat, maxlon, maxlat],
+            'extent': [minlon, minlat, maxlon, maxlat],
+            'data': [{'datasetId': product,
+                      'variable': varNames[0]
+                      }]
+        }
+    }
 
-    return jsonData
+    download_results = download_imerg(subset_request)
 
 def lambda_handler(event, context):
-    #    product = 'GPM_3IMERGDE_06'
-    # product = 'GPM_3IMERGDF_06'
-    # use "Late" product
-    product = 'GPM_3IMERGDL_06'
-    varName = 'HQprecipitation'
-    for record in event['Records']:
-        bucket = record['s3']['bucket']['name']
-        key = unquote_plus(record['s3']['object']['key'])
 
-        input_json = load_json(bucket, key)
+    print("event ", event)
+
+    if 'body' in event:
+        event = json.loads(event['body'])
+
+    product = event['product']
+    start_date = event['start_date']
+    end_date = event['end_date']
+    #begTime = '2015-08-01T00:00:00.000Z'
+    #endTime = '2015-08-01T23:59:59.999Z'
+
+    minlon = event['min_lon']
+    maxlon = event['max_lon']
+    minlat = event['min_lat']
+    maxlat = event['max_lat']
+    varName = event['variable']
+    # extract polygon json struct and upload to S3 bucket
+    # set up for passing polygons as json input
+
+   # with open("/tmp/" + download_fn+ ".json", 'w') as json_file:
+    #    json.dump(outputJson, json_file)
+    #    s3 = boto3.resource('s3')
+    #polyfile = '/tmp/'+polyfilename
+    #s3.Bucket(polybucket).download_file(polyfilename, polyfile)
+    #s3.Bucket(output_bucket).upload_file("/tmp/" + download_fn+ ".json", "imerg/"+ download_fn+".json")
 
 
-        dataset = input_json["dataset"]
-        org_unit = input_json["org_unit"]
-        agg_period = input_json["agg_period"]
-        request_id = input_json["request_id"]
-        print("request_id ", request_id)
-
-        start_date = input_json['start_date']
-        end_date = input_json['end_date']
-        #begTime = '2015-08-01T00:00:00.000Z'
-        #endTime = '2015-08-01T23:59:59.999Z'
-
-        minlon = input_json['min_lon']
-        maxlon = input_json['max_lon']
-        minlat = input_json['min_lat']
-        maxlat = input_json['max_lat']
-
-        data_element_id = input_json['data_element_id']
-
-    #    varName = event['variable']
-        # Construct JSON WSP request for API method: subset
-        subset_request = {
-            'methodname': 'subset',
-            'type': 'jsonwsp/request',
-            'version': '1.0',
-            'args': {
-                'role': 'subset',
-                'start': start_date,
-                'end': end_date,
-                'box': [minlon, minlat, maxlon, maxlat],
-                'extent': [minlon, minlat, maxlon, maxlat],
-                'data': [{'datasetId': product,
-                          'variable': varName
-                          }]
-            }
+    # The dimension slice will be for pressure levels between 1000 and 100 hPa
+    # dimName = '/HDFEOS/SWATHS/Temperature/nLevels'
+    # dimVals = [1,2,3,4,5,6,7,8,9,10,11,12,13]
+    # dimSlice = []
+    # for i in range(len(dimVals)) :
+    #    dimSlice.append({'dimensionId': dimName, 'dimensionValue': dimVals[i]})
+    # Construct JSON WSP request for API method: subset
+    subset_request = {
+        'methodname': 'subset',
+        'type': 'jsonwsp/request',
+        'version': '1.0',
+        'args': {
+            'role': 'subset',
+            'start': start_date,
+            'end': end_date,
+            'box': [minlon, minlat, maxlon, maxlat],
+            'extent': [minlon, minlat, maxlon, maxlat],
+            'data': [{'datasetId': product,
+                      'variable': varName
+                      }]
         }
+    }
 
-        download_results=download_imerg(subset_request)
+    download_results=download_imerg(subset_request)
 
-        # need error check on download_imerg
+    return dict(statusCode='200', headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                body=json.dumps({'files': download_results}), isBase64Encoded='false')
 
-        # write out file list as json file into monitored s3 bucket to trigger aggregation
-        # format new json structure
-        aggregateJson = {"request_id": request_id, "data_element_id": data_element_id, "variable": varName,
-                         "dataset": dataset, "org_unit": org_unit, "agg_period": agg_period,
-                         "s3bucket": data_bucket, "files": download_results}
 
-        aggregate_pathname = "requests/aggregate/precipitation/"
+#return dict(statusCode='200', body={'files': download_results}, isBase64Encoded='false')
+#    return dict(body={'files': download_results}, isBase64Encoded='false')
 
-        with open("/tmp/" + request_id + "_aggregate.json", 'w') as aggregate_file:
-            json.dump(aggregateJson, aggregate_file)
-        #        json.dump(districtPrecipStats, json_file)
-        aggregate_file.close()
+    # return {
+    #     'files': download_results
+    # }
 
-        s3.Bucket(data_bucket).upload_file("/tmp/" + request_id + "_aggregate.json",
-                                           aggregate_pathname + request_id + "_aggregate.json")
+if __name__ == '__main__':
+   main()
